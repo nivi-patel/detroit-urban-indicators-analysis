@@ -1,0 +1,308 @@
+---
+title: "Detroit Urban Indicators: Comparative Census Analysis"
+author: "Nivedita Patel"
+date: "October 2024"
+output: html_document
+---
+
+```{r}
+#Question 1
+# Set your working directory to the project folder
+# setwd("path/to/your/project/folder")
+# Note: CSV data files should be placed in the same directory
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+
+pop<-read.csv('population_B01003.csv')
+poverty<-read.csv('poverty status_B17001.csv')
+transportation<-read.csv('transportation_B08006.csv')
+vacancy<-read.csv('Vacancy_B25004.csv')
+
+# only keep specific columns 
+pop_sub <- pop%>% select(c(1,2))
+poverty_sub <- poverty %>% select(c(1,3))
+transportation_sub <- transportation %>% select(c(1,3))
+vacancy_sub <- vacancy %>% select(c(1,2))
+
+#bind columns 
+data_sub <- bind_cols(pop_sub)%>% bind_cols(poverty_sub)%>% bind_cols(transportation_sub)%>% bind_cols(vacancy_sub)
+
+# Renaming columns 
+colnames(data_sub)[1] <- c('Urban_areas')
+colnames(data_sub)[2] <- c('total_population')
+colnames(data_sub)[4] <- c('total_poverty')
+colnames(data_sub)[6] <- c('total_transit')
+colnames(data_sub)[8] <- c('total_vacancy')
+
+#Removing repetitive columns
+data_sub <- data_sub %>%
+  select(-c(3,5,7))
+data_sub
+
+data_sub %>%
+mutate(Urban_areas=lag(Urban_areas)) %>%
+filter(total_population!= "") %>% 
+mutate(total_population=as.numeric(str_remove_all(total_population, ",")), 
+total_poverty=as.numeric(str_remove_all(total_poverty, ",")), 
+total_transit=as.numeric(str_remove_all(total_transit, ",")),
+total_vacancy=as.numeric(str_remove_all(total_vacancy, ",")))
+
+clean_data<-data_sub %>%
+mutate(Urban_areas=lag(Urban_areas)) %>%
+filter(total_population!= "") %>% 
+mutate(total_population=as.numeric(str_remove_all(total_population, ",")), 
+total_poverty=as.numeric(str_remove_all(total_poverty, ",")), 
+total_transit=as.numeric(str_remove_all(total_transit, ",")),
+total_vacancy=as.numeric(str_remove_all(total_vacancy, ",")))
+
+#new column to Calculate per 1000 residents
+clean_data%>% mutate(poverty_res=(total_poverty/total_population)*1000,transit_res=(total_transit/total_population)*1000,vacancy_res=(total_vacancy/total_population)*1000)
+
+census<-clean_data%>% mutate(poverty_res=(total_poverty/total_population)*1000,transit_res=(total_transit/total_population)*1000,vacancy_res=(total_vacancy/total_population)*1000)
+census
+
+resident_data<-census %>% select(1,2,6,7,8)
+resident_data
+
+detroit_summary <- filter(resident_data,Urban_areas=='Detroit, MI Urban Area (2020)')
+detroit_summary 
+```
+
+
+```{r}
+#Question 2 - three statistical methods and three visualizations 
+#1 Descriptive statistics
+#Mean, median 
+summary(census)
+#standard deviation
+sd(census$total_population)
+sd(census$total_poverty)
+sd(census$total_transit)
+sd(census$total_vacancy)
+sd(census$poverty_res)
+sd(census$transit_res)
+sd(census$vacancy_res)
+```
+
+
+```{r}
+#2.Probability Distribution 
+#2.1 Z-score
+#probability distribution- Z score 
+library(dplyr)
+z_scores <- census %>%
+  summarise(
+    mean_vacancy = mean(vacancy_res, na.rm = TRUE),
+    sd_vacancy = sd(vacancy_res, na.rm = TRUE),
+    mean_transit = mean(transit_res, na.rm = TRUE),
+    sd_transit = sd(transit_res, na.rm = TRUE),
+    mean_poverty = mean(poverty_res, na.rm = TRUE),
+    sd_poverty= sd(poverty_res, na.rm = TRUE)
+  )   
+#compute Z-score
+census_z <- census %>%
+mutate(z_vacancy = (vacancy_res- z_scores$mean_vacancy) / z_scores$sd_vacancy,
+    z_transit = (transit_res-z_scores$mean_transit) / z_scores$sd_transit,
+    z_poverty = (poverty_res- z_scores$mean_poverty) / z_scores$sd_poverty
+  )
+head(census_z)      
+census_z %>% filter(Urban_areas == 'Detroit, MI Urban Area (2020)')
+```
+
+```{r}
+#2.2confidence interval
+critical_value <- 1.96 
+
+#Sample size
+sample_size <- nrow(census)
+
+#standard Error for all variables
+standard_error_poverty <- c(z_scores$sd_poverty)/sqrt(sample_size)
+standard_error_transit <- c(z_scores$sd_transit)/sqrt(sample_size)
+standard_error_vacancy <- c(z_scores$sd_vacancy)/sqrt(sample_size)
+
+#Margin of Error for all variables
+margin_error_poverty <- critical_value * standard_error_poverty
+margin_error_transit <- critical_value * standard_error_transit
+margin_error_vacancy <- critical_value * standard_error_vacancy 
+
+#confidence interval poverty
+confidence_interval_poverty<- c((z_scores$mean_poverty)-margin_error_poverty,(z_scores$mean_poverty)+margin_error_poverty)
+confidence_interval_poverty
+
+#confidence interval transit
+confidence_interval_transit<- c((z_scores$mean_transit)-margin_error_transit,(z_scores$mean_transit)+margin_error_transit)
+confidence_interval_transit
+
+#confidence interval housing vacancy
+confidence_interval_vacancy<- c((z_scores$mean_vacancy)-margin_error_vacancy,(z_scores$mean_vacancy)+margin_error_vacancy)
+confidence_interval_vacancy
+```
+
+```{r}
+#3.ANOVA
+#create a new column for income levels 
+poverty_lvl <- census %>% mutate(poverty_level= cut(poverty_res,breaks=quantile(poverty_res,probs=c(0,0.33,0.66,1),na.rm=T),labels = c("low","middle","high"), include.lowest=TRUE))
+head(poverty_lvl)
+
+#perform ANOVA 
+anova_result_ti <- aov(transit_res ~ poverty_level, data = poverty_lvl)
+summary(anova_result_ti )
+
+anova_result_vi <- aov(vacancy_res ~ poverty_level, data = poverty_lvl)
+summary(anova_result_vi )
+```
+
+```{r}
+#perform ANOVA posthoc test:Tukey's HSD Test 
+tukey_result_ti <- TukeyHSD(anova_result_ti)
+print(tukey_result_ti)
+
+tukey_result_vi <- TukeyHSD(anova_result_vi)
+print(tukey_result_vi)
+
+
+```
+
+
+
+
+
+
+
+```{r}
+#2.2 Visualisation 
+#1.plot histogram
+
+ggplot(data=resident_data, aes(x=poverty_res)) + 
+  geom_histogram(fill="mistyrose", color="black", bins=20, linetype = "dashed") + 
+# income for the Detroit
+  geom_vline(xintercept = (detroit_summary$poverty_res), color='maroon') + 
+# average income for all urban areas 
+  geom_vline(xintercept = mean(resident_data$poverty_res), color='blue') +
+  labs(x="poverty", y="Frequency") + 
+  ggtitle("Poverty Distribution Histogram")
+
+ggplot(data=resident_data, aes(x=transit_res)) + 
+  geom_histogram(fill="lemonchiffon", color="black", bins=20, linetype = "dashed") + 
+# transit for the Detroit
+  geom_vline(xintercept = (detroit_summary$transit_res), color='maroon') + 
+# transit for all urban areas
+  geom_vline(xintercept = mean(resident_data$transit_res), color='blue') +
+  labs(x="transit", y="Frequency") + 
+  ggtitle("Modes of transit Distribution Histogram")
+  
+ggplot(data=resident_data, aes(x=vacancy_res)) + 
+  geom_histogram(fill="lavender", color="black", bins=20, linetype = "dashed") + 
+# housing vacancy for the Detroit
+  geom_vline(xintercept = (detroit_summary$vacancy_res), color='maroon') + 
+# housing vacancy for all urban areas
+  geom_vline(xintercept = mean(resident_data$vacancy_res), color='blue') +
+  labs(x="housing vacancy", y="Frequency") + 
+  ggtitle("Housing vacancy Distribution Histogram")
+```
+
+```{r}
+#2Box Plot 
+# Define a function that normalize a vector of data between 0 and 1
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+boxplot(normalize(census$poverty_res), normalize(census$transit_res), normalize(census$vacancy_res), 
+        names = c("Poverty", "Transit","Housing Vacancy"),
+        main = "Box-Plots of Urban Areas",
+        ylab = "Normalized Value",
+        col = c("lightpink2", "steelblue", "palegreen"))
+
+```
+
+
+```{r}
+#3Corelation Matrix
+library(corrplot)
+library(dplyr)
+##Run Correlation 
+continuous_vars <-census %>% select(c(total_population,poverty_res,transit_res,vacancy_res))
+cor_matrix <- cor(continuous_vars)
+cor_matrix
+```
+
+```{r}
+#Visualize a Correlation Matrix
+# rename matrix column and row names to more readable labels
+colnames(cor_matrix) <- c('population', 'Poverty', 'Transit', 'Housing Vacancy')
+rownames(cor_matrix) <- c('population', 'Poverty', 'Transit', 'Housing Vacancy')
+custom_colors <- colorRampPalette(c("indianred", "slategray2", "khaki"))(200)
+corrplot(cor_matrix, method = "color", addCoef.col = "black", tl.cex = 0.8, col = custom_colors)
+```
+
+
+```{r}
+#Q3.Linear regression 
+pop<-read.csv('population_B01003.csv')
+poverty<-read.csv('poverty status_B17001.csv')
+education<-read.csv('education_B15003.csv')
+employment<-read.csv('employment_ B23025.csv')
+race<-read.csv('race_B02001.csv')
+
+
+# only keep specific columns 
+pop_sub <- pop%>% select(c(1,2))
+poverty_sub <- poverty %>% select(c(3))
+education_sub <- education %>% select(c(23))
+employment_sub<- employment %>% select(c(3))
+race_sub<-race%>% select (c(3))
+
+#bind columns 
+data_sub_1 <- bind_cols(pop_sub)%>% bind_cols(poverty_sub)%>% bind_cols(education_sub)%>% bind_cols(employment_sub)%>% bind_cols(race_sub)
+
+# Renaming columns 
+colnames(data_sub_1)[1] <- c('Urban_areas')
+colnames(data_sub_1)[2] <- c('total_population')
+colnames(data_sub_1)[3] <- c('poverty')
+colnames(data_sub_1)[4] <- c('education')
+colnames(data_sub_1)[5] <- c('employment')
+colnames(data_sub_1)[6] <- c('race')
+
+clean_data_1<-data_sub_1 %>%
+mutate(Urban_areas=lag(Urban_areas)) %>%
+filter(total_population!= "") %>% 
+mutate(total_population=as.numeric(str_remove_all(total_population, ",")), 
+poverty=as.numeric(str_remove_all(poverty, ",")), 
+education=as.numeric(str_remove_all(education, ",")),
+employment=as.numeric(str_remove_all(employment, ",")),
+race=as.numeric(str_remove_all(race, ",")))
+clean_data_1
+
+#new column to Calculate per 1000 residents
+census_3<-clean_data_1%>% mutate(poverty_res=(poverty/total_population)*1000,education_res=(education/total_population)*1000,employment_res=(employment/total_population)*1000,race_res=(race/total_population)*1000)
+census_3
+
+library(ggplot2)
+model <- lm(poverty_res ~ education_res + employment_res + race_res, data = census_3)
+summary(model)
+```
+```{r}
+#Visualization for Q3 
+#scatterplot 
+library(ggplot2)
+library(plotly)
+
+ggplot(census_3,aes(x=poverty_res,y=education_res))+geom_point(col="mediumpurple")+geom_smooth(method="lm")
+labs(title = "Poverty vs.education", x = "poverty", y = "education") +
+  theme_minimal()
+
+
+ggplot(census_3, aes(x=poverty_res,y=employment_res))+geom_point(col="tomato1")+geom_smooth(method="lm")
+labs(title = "Poverty vs. housing vacancy", x = "poverty", y = "employment") +
+  theme_minimal()
+
+
+ggplot(census_3, aes(x=poverty_res,y=race_res))+geom_point(col="steelblue")+geom_smooth(method="lm")
+labs(title = "Poverty  vs. housing vacancy", x = "poverty", y = "race") +
+  theme_minimal()
+
+
+```
